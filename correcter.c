@@ -59,7 +59,7 @@ int kmer_correct(int i, int k_idx, read *item, int threshold, fm_index *index, i
     return 0;
 }
 
-void read_correct(read *item, fm_index *index, int kmer_length, int max_attempts){
+/*void read_correct(read *item, fm_index *index, int kmer_length, int max_attempts){
     int *trust_value = (int*)calloc(item->len,sizeof(int));
     int num_kmers = item->len - kmer_length + 1;
     int *min_phred = (int*)malloc(num_kmers*sizeof(int));
@@ -125,6 +125,80 @@ void read_correct(read *item, fm_index *index, int kmer_length, int max_attempts
     }
     if(all_trusted == 1)
         printf("Corrected read : %s\n",item->seq);
+}
+*/
+//Correct version
+void read_correct(read *item, fm_index *index, int kmer_length, int max_attempts){
+    if(item->len < kmer_length){
+	    printf("Cannot correct... Returning...\n");
+        return;
+	}
+    int num_kmers = item->len - kmer_length + 1;
+	int allSolid = 0;
+    int done = 0;
+    int rounds = 0;
+    int *min_phred_vector = (int*)malloc(num_kmers*sizeof(int));
+    for(int i = 0; i < num_kmers; ++i)
+    {
+        int end = i + kmer_length - 1;
+        int min_phred = INT_MAX;
+        for(int j = i; j <= end; ++j)
+        	min_phred = item->qual[j]-33 < min_phred ? item->qual[j]-33 : min_phred;
+        min_phred_vector[i] = min_phred;
+    }
+	while(done==0 && num_kmers > 0){
+	    int *countVector = (int*)calloc(num_kmers,sizeof(int));
+        int *solidVector = (int*)calloc(item->len,sizeof(int));
+	    for(int i = 0; i < nk; ++i){
+            int count = get_kmer_count(&item->seq[i], kmer_length, index);
+            int phred = min_phred_vector[i];
+            countVector[i] = count;
+            int threshold = m_minSupportLowQuality;
+            if(min_phred >= m_highQualityCutoff)
+                threshold = m_minSupportHighQuality;
+            if(count >= threshold)
+            {
+                for(int j = i; j < i + kmer_length; ++j)
+                    solidVector[j] = 1;
+            }
+        }
+		allSolid = 1;
+		for(int i = 0; i < item->len; ++i){
+		    if(solidVector[i] != 1)
+			    allSolid = 0;
+		}
+		if(allSolid || rounds++ > maxAttempts)
+            break;
+		int corrected = 0;
+        for(int i = 0; i < item->len; ++i)
+        {
+            if(solidVector[i] != 1)
+            {
+                int phred = item->qual[i]-33;
+                int threshold = m_minSupportLowQuality;
+                if(phred >= m_highQualityCutoff)
+                    threshold = m_minSupportHighQuality;
+
+                int left_kmer_k = i + 1 >= kmer_length ? i + 1 - kmer_length : 0;
+                corrected = kmer_correct(i, left_kmer_k, item, threshold, index, kmer_length);
+                if(corrected==1)
+                    break;
+                int right_kmer_k = i < item->len - kmer_length ? i : item->len - kmer_length;
+                corrected = kmer_correct(i, right_kmer_k, item, threshold, index, kmer_length);
+                if(corrected==1)
+                    break;
+            }
+        }
+        if(!corrected)
+            done = 1;
+    }
+
+    if(allSolid == 1)
+        printf("Corrected read is:%s\n",item->seq);
+    else
+    {
+        printf("Could not correct read\n");
+    }
 }
 
 int main(int argc, char *argv[]){
